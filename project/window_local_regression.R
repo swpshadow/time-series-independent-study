@@ -6,11 +6,11 @@ csr3 <- read_excel("./example_failure_data_sets.xlsx", sheet = "CSR3")
 
 
 lwr <- function(data, window.size=10, step.size=5, degree=1, predicting.degree=NA, ma.size = 3){
-  window.size=10
-  step.size=10
+
   degree=1
   predicting.degree=NA
   data =  traindf
+  window.size=round(0.1* length(data$x))
   step.size = window.size
   ma.size = 3
   if(is.na(predicting.degree)){
@@ -18,26 +18,37 @@ lwr <- function(data, window.size=10, step.size=5, degree=1, predicting.degree=N
   }
   #fit local regression models in a sliding window fashion
   #initial fit section of paper
-  dat<- rep(0, (length(data$x) - window.size + 1))
   models <- data.frame(matrix(vector(), nrow=length(seq(window.size, length(data$x), step.size)), ncol=degree +1) )
   count = 0
+  
   for(i in seq(window.size, length(data$x), step.size)){
     count <- count + 1
     models[count,] <- lm(y~poly(x, degree=degree, raw=TRUE), data[(i-window.size+ 1):i,])$coeff
     lines(x=data[(i-window.size + 1):i,1], y = predict.lwr(data[(i-window.size+ 1):i,1], models[count,]), col="blue")
-
+  }
+  if(i-step.size < length(data$x))
+  {
+    count <- count + 1
+    models[count,] <- lm(y~poly(x, degree=degree, raw=TRUE), data[(length(data$x)-window.size + 1):length(data$x),])$coeff
+    lines(x=data[(length(data$x)-window.size + 1):length(data$x),1], 
+          y = predict.lwr(data[(length(data$x)-window.size+ 1):length(data$x),1], models[count,]), col="blue")
   }
   
   #fit a model to the params of the sliding window models
   #prediction section of the paper
   params = rep(0, degree+1)
+  start.idx = 1
   for(d in seq(degree + 1) ){
     #make data to train
-    dat <- data.frame("x" = seq(1,count), "y" = models[,d])
+    dat <- data.frame("x" = seq(start.idx,count), "y" = models[start.idx:count,d])
+    
     mod <- lm(y~poly(x, degree=predicting.degree, raw=TRUE), dat)
     #make data to test
-    dat <- data.frame("x" = seq(length(models[,1])+1, length(models[,1])+ 1))
-    params[d] <- tail(predict.lm(mod,  dat), n=1)
+    dat2 <- data.frame("x" = c(count+1))
+    params[d] <- tail(predict.lm(mod,  dat2), n=1)
+    dat[count+1,] = c(count+1, tail(predict.lm(mod,  dat2), n=1)[[1]] )
+    plot(dat)
+    lines(x=dat$x, y = predict.lwr(dat$x,  mod$coefficients))
   }
   
   #then we can use params to make the model after the data. 
@@ -48,25 +59,28 @@ lwr <- function(data, window.size=10, step.size=5, degree=1, predicting.degree=N
   error_params = rep(0, degree + 1)
   ma = rep(0, degree + 1)
   epsilon = rep(0, degree + 1)
+  d=1
   for(d in seq(degree + 1) ){
-    #make data to train
-    dat <- data.frame("x" = seq(1,count - 1 ), "y" = models[count-1,d])
-    mod <- lm(y~poly(x, degree=predicting.degree, raw=TRUE), dat)
     
+    #make data to train
+    dat <- data.frame("x" = seq(1,count-1), "y" = models[1:count-1,d])
+    mod <- lm(y~poly(x, degree=predicting.degree, raw=TRUE), dat)
+  
     #make data to test
-    dat <- data.frame("x" = seq(count, count +1 ) )
+    dat <- data.frame("x" = c(count) )
+
     error_params[d] <- tail(predict.lm(mod,  dat), n=1)
   
     #prediction error correction
     epsilon[d] = models[count,d] - error_params[d]
-    params[d] <- params[d] +  epsilon[d]
+    params[d] <- params[d] + epsilon[d]
     
     #moving average error correction
-    ma[d] = mean(tail(moving.average(models[,d]), n=ma.size))
-    params[d] = 0.5*( params[d] + ma[d])  
+    ma[d] = mean(tail(moving.average(models[, d]), n = ma.size))
+    params[d] = 0.5 * (params[d] + ma[d])  
 
   }
-  
+  #return(ma)
   return(params)
 }
 
@@ -78,7 +92,6 @@ predict.lwr <- function(dat, coef){
   for(i in seq(0, deg)){
     for(x in seq(length(dat))){
       res[x] <- res[x] + coef[i+1] * dat[x]^i
-      # print(res[x])
     }
     
   }
@@ -103,9 +116,10 @@ testdf <- data.frame("x"=csr3$FT[as.integer(length(csr3$FT)* 0.9):length(csr3$FT
 
 plot(csr3$FT, csr3$FN)
 
-window_size = 5
+window_size = length(traindf$x)* 0.1
 result <- lwr(traindf, degree=1, window.size = window_size, step.size = window_size, ma.size = 1)
 
 predict.lwr(testdf$x, result)
 
+plot(csr3$FT, csr3$FN)
 lines(x=testdf$x, y=predict.lwr(testdf$x, result), col="red")
